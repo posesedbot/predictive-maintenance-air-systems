@@ -1,49 +1,40 @@
-from fastapi import FastAPI 
-from pydantic import BaseModel 
- 
-app = FastAPI(title="Predictive Maintenance API") 
- 
-from pydantic import BaseModel, Field 
+from fastapi import FastAPI
+from pydantic import BaseModel, Field
 
-class SensorReadings(BaseModel): 
-  run_hours: float = Field(ge=0, le=50000) 
-  temp_avg: float = Field(ge=-50, le=300) 
-  pressure_avg: float = Field(ge=0, le=100) 
-  vibration: float = Field(ge=0, le=50) 
-def heuristic_predict(run_hours: float, vibration: float) -> int: 
-    return int((run_hours >= 1500) and (vibration > 2.0)) 
- 
-@app.post("/predict") 
-def predict_failure(readings: SensorReadings): 
-    y_pred = heuristic_predict(readings.run_hours, readings.vibration) 
-    action = ( 
-        "IMMEDIATE SHUTDOWN & INSPECTION. Failure triggered by high Run Hours (>1500 hrs) and high Vibration (>2.0)." 
-        if y_pred == 1 
-        else "No immediate action required. Continue routine monitoring." 
-    ) 
-    # ... (Lines where you apply the heuristic rule and define the 'action' string)
+app = FastAPI(title="Air Supply System Monitoring API")
 
-    # Note: 'y_pred' and 'action' must be defined above this line.
+class AirSystemReadings(BaseModel):
+    """
+    Schema for compressed air system monitoring. 
+    Focuses on pressure drops and flow rates to detect leaks and clogged filters.
+    """
+    runtime_hours: float = Field(..., ge=0, description="Compressor run time")
+    line_pressure_bar: float = Field(..., ge=0, le=15, description="Main line pressure")
+    filter_delta_p: float = Field(..., ge=0, le=5, description="Pressure drop across filters")
+    leak_rate_cfm: float = Field(..., ge=0, description="Flow measured during idle periods")
 
-    return { 
-        "prediction": y_pred, 
-        "action_required": action, 
-        "inputs": readings.dict() 
-    } 
-# Nothing else goes inside the predict_failure function after this line!
+def air_heuristic_predict(leak_rate: float, delta_p: float) -> int:
+    """
+    Logic: If leak rate is high (> 5.0 CFM) OR filter pressure drop 
+    is excessive (> 1.2 Bar), maintenance is required.
+    """
+    return int((leak_rate > 5.0) or (delta_p > 1.2))
 
-Local smoke test (run these after uvicorn api.fastapi_app:app --reload):
+@app.post("/predict")
+def predict_maintenance(readings: AirSystemReadings):
+    y_pred = air_heuristic_predict(readings.leak_rate_cfm, readings.filter_delta_p)
+    
+    if y_pred == 1:
+        action = (
+            "MAINTENANCE REQUIRED. Detected excessive air leaks (>5 CFM) "
+            "or high pressure drop (>1.2 Bar) across filtration. "
+            "Inspect system for leaks and replace filter elements."
+        )
+    else:
+        action = "SYSTEM EFFICIENT. Pressure and leak rates within normal operating range."
 
-curl -s -X POST "http://127.0.0.1:8000/predict" \ 
-  -H "Content-Type: application/json" \ 
-  -d '{"run_hours":2000,"temp_avg":95.0,"pressure_avg":6.5,"vibration":2.8}' 
-Expected shape:
-
-{ 
-  "prediction": 1, 
-  "action_required": "IMMEDIATE SHUTDOWN & INSPECTION. Failure triggered by high Run Hours (>1500 hrs) and high Vibration (>2.0).", 
-  "run_hours_input": 2000.0, 
-  "vibration_input": 2.8, 
-  "temp_avg_input": 95.0, 
-  "pressure_avg_input": 6.5 
-} 
+    return {
+        "prediction": y_pred,
+        "action_required": action,
+        "inputs": readings.model_dump()
+    }
